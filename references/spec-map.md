@@ -8,12 +8,12 @@ Always cross-check table layouts with `spec_lookup.sh actbl <SIG>` (ACPICA `actb
 | ACPI tables defined in the ACPI spec: FADT, MADT, DSDT/SSDT, FACS, RSDP/XSDT, BERT, BGRT, CPEP, ECDT, EINJ, ERST, FPDT, GTDT, HEST, MSCT, MPST, NFIT, PCCT, PDTT, PHAT, PMTT, PPTT, RASF, RAS2, SBST, SDEV, SLIT, SRAT, MISC, CCEL (`src/acpi/<sig>/`, `fwts_acpi_table_<sig>`) | ACPI_spec RST | `spec_lookup.sh acpi '<SIG>'`, then `view` the file at the reported line |
 | ACPI objects and methods: `_BST`, `_PSS`, `_CST`, `_OSC`, `_DSM` … (`src/acpi/method/`) | ACPI_spec RST | `spec_lookup.sh acpi '_BST'` |
 | ACPI opcodes, operation regions, PCC/FFH/GPIO/SMBus address spaces (`src/libfwtsacpica/`) | ACPI_spec RST (chapters 5 and 19) | `spec_lookup.sh acpi 'PCC.*Operation Region'` |
-| ASPT (AMD) | `Document/ACPI/AMD/` | `pdf ACPI/AMD 'ASPT' '*ASPT*'` |
+| ASPT (AMD) | `Document/ACPI/AMD/`, `Document/ACPI/` (ASPT2) | `pdf ACPI/AMD 'ASPT' '*ASPT*'`; `pdf ACPI '<term>' '*ASPT2*'` |
 | CEDT (CXL) | `Document/ACPI/` CXL spec | `pdf ACPI '<term>' '*CEDT*'` |
 | CDAT | `Document/ACPI/` | `pdf ACPI '<term>' '*CDAT*'` |
 | IORT (Arm) | `Document/ACPI/IORT/` (DEN0049, newest rev E.f) | `pdf ACPI/IORT '<term>' '*E.f*'` |
 | MPAM (Arm) | `Document/ACPI/` DEN0065 | `pdf ACPI '<term>' '*MPAM*2.0*'` |
-| AEST (Arm RAS) | `Document/ACPI/` DEN0085 | `pdf ACPI '<term>' '*AEST*'` |
+| AEST (Arm RAS) | `Document/ACPI/` DEN0085 1.1; `Document/ARM/` DEN0085 2.0 beta | `pdf ACPI '<term>' '*AEST*'`; `pdf ARM '<term>' '*AEST*'` (v2) |
 | APMT, SDEI, BSA, SBBR, PSCI (Arm) | `Document/ARM/` | `list ARM`, then `pdf ARM '<term>' '*<name>*'` |
 | SPCR, DBG2, DBGP, WSMT, SLIC, WDAT (Microsoft) | `Document/ACPI/` (`.doc`/`.docx`/`.odt`) and `Document/Microsoft/` | `pdf ACPI '<term>' '*SPCR*'` (`.doc` is unsupported: convert with `libreoffice --headless --convert-to docx`) |
 | TPM2, TCPA (TCG ACPI) | `Document/ACPI/TCG_ACPIGeneralSpecification*` and `Document/TPM/` | `pdf ACPI '<term>' '*TCG*'` |

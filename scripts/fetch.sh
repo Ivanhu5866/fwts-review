@@ -1,6 +1,6 @@
 #!/bin/bash
 # fwts-review: put the change under review into an isolated worktree.
-#   fetch.sh [--repo DIR] [--base REF] INPUT
+#   fetch.sh [--repo DIR] [--base REF] INPUT   (default base: origin master)
 #   fetch.sh [--repo DIR] --cleanup ID
 # INPUT: PR number | https://github.com/fwts/fwts/pull/N[/changes|commits/<sha>]
 #        | https://lists.ubuntu.com/archives/fwts-devel/YYYY-Month/NNNNNN.html | A..B
@@ -9,7 +9,9 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$HOME/work/fwts
-BASE_REF=origin/master
+ROOT=${FWTS_REVIEW_ROOT:-/tmp}	# override for tests only
+CACHE=refs/fwts-review/origin-master
+BASE_REF=$CACHE
 CLEANUP=
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -21,14 +23,21 @@ while [ $# -gt 0 ]; do
 	esac
 done
 g() { git -C "$REPO" "$@"; }
+# fetch only into refs/fwts-review/*: no tags, no FETCH_HEAD, no remote-tracking refs
+gf() { g fetch -q --no-tags --no-write-fetch-head --refmap= origin "$@"; }
 fail() {
 	echo "fetch: $*" >&2
 	if [ -n "$ID" ]; then echo "fetch: clean up with: $0 --cleanup $ID" >&2; fi
 	exit 3
 }
 
+# keeps $CACHE: it is shared by all reviews
 cleanup() {
-	local id=$1 work=/tmp/fwts-review-$1 w
+	local id=$1 work=$ROOT/fwts-review-$1 w
+	if ! [[ $id =~ ^[A-Za-z0-9._-]+$ ]] || [[ $id == *..* ]]; then
+		echo "fetch: bad ID '$id'" >&2
+		exit 2
+	fi
 	for w in wt wt-base wt-clang; do
 		if [ -d "$work/$w" ]; then g worktree remove --force "$work/$w" || true; fi
 	done
@@ -47,10 +56,9 @@ ID= SHA= N= MBOX=
 if [[ $IN =~ lists\.ubuntu\.com/archives/fwts-devel/ ]]; then
 	KIND=ml
 	MBOX=$(mktemp --suffix=.mbox)
-	if ! python3 "$HERE/mbox_extract.py" "$IN" "$MBOX" > "$MBOX.out"; then
-		rm -f "$MBOX" "$MBOX.out"
+	trap 'rm -f "$MBOX" "$MBOX.out"' EXIT
+	python3 "$HERE/mbox_extract.py" "$IN" "$MBOX" > "$MBOX.out" ||
 		fail "could not extract the patch from $IN"
-	fi
 	MSGID=$(sed -n 's/^MSGID=//p' "$MBOX.out")
 	ID=ml-$(printf '%s' "$MSGID" | sha1sum | cut -c1-8)
 elif [[ $IN =~ ^([0-9]+)$ ]] ||
@@ -66,54 +74,57 @@ else
 	sed -n '2,8p' "$0" >&2; exit 2
 fi
 
-g fetch -q origin || fail "git fetch origin failed"
-
-# 2. resolve BASE/HEAD
+# 2. resolve BASE/HEAD (local ranges need no network)
 case $KIND in
 local)
 	BASE=$(g rev-parse --verify "${IN%%..*}^{commit}") || fail "bad base ${IN%%..*}"
 	HEAD=$(g rev-parse --verify "${IN##*..}^{commit}") || fail "bad head ${IN##*..}"
-	ID=local-${HEAD:0:8}
+	ID=local-${BASE:0:8}-${HEAD:0:8}
+	;;
+*)
+	gf "+refs/heads/master:$CACHE" || fail "git fetch origin master failed"
+	g rev-parse -q --verify "$BASE_REF^{commit}" > /dev/null || fail "bad --base $BASE_REF"
 	;;
 esac
-WORK=/tmp/fwts-review-$ID
+WORK=$ROOT/fwts-review-$ID
 if [ -e "$WORK" ]; then cleanup "$ID" > /dev/null; fi
 mkdir -p "$WORK/logs"
 
 case $KIND in
 pr)
-	g fetch -q origin "+pull/$N/head:refs/fwts-review/$ID" || fail "cannot fetch PR $N"
+	gf "+pull/$N/head:refs/fwts-review/$ID" || fail "cannot fetch PR $N"
 	gh pr view "$N" -R fwts/fwts \
 		--json number,title,body,author,baseRefName,headRefName,commits,files,url \
 		> "$WORK/pr.json" || echo "WARNING: gh pr view failed" >&2
 	if [ -n "$SHA" ]; then
 		g rev-parse -q --verify "$SHA^{commit}" > /dev/null ||
-			g fetch -q origin "$SHA" || fail "commit $SHA not found"
+			gf "$SHA" || fail "commit $SHA not found"
 		HEAD=$(g rev-parse "$SHA^{commit}")
 		g merge-base --is-ancestor "$HEAD" "refs/fwts-review/$ID" ||
 			echo "WARNING: $SHA is not in the current PR head (force-pushed?)" >&2
 		BASE=$(g rev-parse "$HEAD^")
 	else
 		HEAD=$(g rev-parse "refs/fwts-review/$ID")
-		BASE=$(g merge-base "$BASE_REF" "$HEAD")
+		BASE=$(g merge-base "$BASE_REF" "$HEAD") ||
+			fail "no merge base between $BASE_REF and PR $N"
 	fi
-	g worktree add -q --detach "$WORK/wt" "$HEAD"
+	g worktree add -q --detach "$WORK/wt" "$HEAD" || fail "git worktree add failed"
 	;;
 local)
-	g worktree add -q --detach "$WORK/wt" "$HEAD"
+	g worktree add -q --detach "$WORK/wt" "$HEAD" || fail "git worktree add failed"
 	;;
 ml)
 	mv "$MBOX" "$WORK/series.mbox"
 	rm -f "$MBOX.out"
-	BASE=$(g rev-parse "$BASE_REF")
-	g worktree add -q --detach "$WORK/wt" "$BASE"
+	BASE=$(g rev-parse "$BASE_REF^{commit}")
+	g worktree add -q --detach "$WORK/wt" "$BASE" || fail "git worktree add failed"
 	if ! git -C "$WORK/wt" am -3 "$WORK/series.mbox" > "$WORK/logs/am.log" 2>&1; then
 		git -C "$WORK/wt" am --abort > /dev/null 2>&1 || true
 		cat "$WORK/logs/am.log" >&2
 		fail "git am failed on $BASE_REF; retry with --base <older ref>"
 	fi
 	HEAD=$(git -C "$WORK/wt" rev-parse HEAD)
-	g update-ref "refs/fwts-review/$ID" "$HEAD"
+	g update-ref "refs/fwts-review/$ID" "$HEAD" || fail "update-ref failed"
 	;;
 esac
 

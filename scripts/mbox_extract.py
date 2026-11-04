@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import tempfile
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -21,6 +22,12 @@ MONTHS = ["January", "February", "March", "April", "May", "June", "July",
 URL_RE = re.compile(r"/fwts-devel/(\d{4})-([A-Za-z]+)/\d+\.html")
 LEAD_RE = re.compile(r"^((?:\[[^\]]*\]\s*)+)")
 NM_RE = re.compile(r"(\d+)/(\d+)")
+DIFF_RE = re.compile(r"^diff --git ", re.M)
+MSG_END_RE = re.compile(r"^(?:---|diff --git .*)$", re.M)
+TRAILER_RE = re.compile(r"^(?:From|Signed-off-by|Acked-by|Reviewed-by|Tested-by|"
+                        r"Reported-by|Co-developed-by|Suggested-by|Cc):",
+                        re.I | re.M)
+OBF_RE = re.compile(r"([A-Za-z0-9._%+-]+) at ([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
 
 
 class IncompleteSeries(Exception):
@@ -54,7 +61,22 @@ def subject(msg):
 def has_diff(msg):
     body = msg.get_payload(decode=False)
     body = body if isinstance(body, str) else str(body)
-    return "diff --git " in body or "\n+++ " in body
+    return bool(DIFF_RE.search(body))
+
+
+def deobfuscate_body(msg):
+    """Undo pipermail's 'user at host' in the commit message's in-body From:
+    and trailer lines; the diff (after the first '---' line) is untouched."""
+    cte = str(msg.get("Content-Transfer-Encoding", "")).lower()
+    if msg.is_multipart() or cte in ("base64", "quoted-printable"):
+        return
+    # work on the raw bytes: get_payload(decode=False) is lossy for 8-bit text
+    body = msg.get_payload(decode=True).decode("ascii", "surrogateescape")
+    end = MSG_END_RE.search(body)
+    cut = end.start() if end else len(body)
+    head = "".join(OBF_RE.sub(r"\1@\2", ln) if TRAILER_RE.match(ln) else ln
+                   for ln in body[:cut].splitlines(keepends=True))
+    msg.set_payload((head + body[cut:]).encode("ascii", "surrogateescape"))
 
 
 def patch_info(msg):
@@ -81,6 +103,8 @@ def select_series(msgs, target):
         raise LookupError("target is not a [PATCH] message")
     key, n, total = info
     if n is None:
+        if not has_diff(t):
+            raise LookupError("target [PATCH] message has no diff (a reply?)")
         return [t]
     cands = {}
     for mid, m in by_id.items():
@@ -105,7 +129,8 @@ def select_series(msgs, target):
                 changed = True
     got = sorted((cands[g][0], g) for g in group if cands[g][0] != 0)
     if [x[0] for x in got] != list(range(1, total + 1)):
-        raise IncompleteSeries(f"have {[x[0] for x in got]} of {total}")
+        raise IncompleteSeries(
+            f"incomplete series: have {[x[0] for x in got]} of {total}")
     return [by_id[g] for _, g in got]
 
 
@@ -115,7 +140,14 @@ def next_month(year, month):
 
 
 def load_month(year, month, tmpdir=None):
-    data = fetch(f"{ARCHIVE}/{year}-{month}.txt.gz")
+    # the current month is only served live as .txt; .txt.gz is rebuilt nightly
+    url = f"{ARCHIVE}/{year}-{month}.txt"
+    try:
+        data = fetch(url)
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
+        data = fetch(url + ".gz")
     try:
         data = gzip.decompress(data)
     except OSError:
@@ -138,6 +170,7 @@ def write_mbox(msgs, out):
             frm = norm_from(m["From"])
             del m["From"]
             m["From"] = frm
+            deobfuscate_body(m)
             box.add(m)
         box.flush()
     finally:
@@ -164,8 +197,13 @@ def main(argv=None):
         msgs = load_month(year, month, tmpdir)
         try:
             series = select_series(msgs, target)
-        except IncompleteSeries:
-            msgs += load_month(*next_month(year, month), tmpdir)
+        except IncompleteSeries as inc:
+            try:
+                msgs += load_month(*next_month(year, month), tmpdir)
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    raise inc from None
+                raise
             series = select_series(msgs, target)
     except Exception as e:  # network, lookup, incomplete series
         print(f"mbox_extract: {e}", file=sys.stderr)

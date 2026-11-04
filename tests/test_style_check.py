@@ -174,9 +174,26 @@ def test_label_camel_wrapped(first):
 
 
 @pytest.mark.parametrize("second", [
-    '\t\t"FooBadValue", "x %s", s);', '\t\ttmp, "bad value");'])
+    '\t\t"FooBadValue", "x %s", s);', '\t\ttmp, "bad value");',
+    '\t\t"Method_PSxBadReturn", "x");'])
 def test_label_camel_wrapped_ok(second):
     assert "label-camel" not in rules([(C, 1, WRAP), (C, 2, second)])
+
+
+def test_label_camel_method_underscore_ok():
+    assert "label-camel" not in rules(
+        [(C, 1, '\tfwts_failed(fw, LOG_LEVEL_HIGH, "Method_PSxBadReturn", "x");')])
+
+
+@pytest.mark.parametrize("label", [
+    "Arm PSCI AFFINITY_INFO ", "fadt_revision:", "smccc_arch_features check "])
+@pytest.mark.parametrize("wrapped", [False, True], ids=["single", "wrapped"])
+def test_label_camel_violations(label, wrapped):
+    if wrapped:
+        added = [(C, 1, WRAP), (C, 2, f'\t\t"{label}", "x");')]
+    else:
+        added = [(C, 1, f'\tfwts_failed(fw, LOG_LEVEL_HIGH, "{label}", "x");')]
+    assert "label-camel" in rules(added)
 
 
 def test_label_camel_wrapped_needs_adjacent_line():

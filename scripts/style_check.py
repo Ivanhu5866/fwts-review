@@ -87,8 +87,12 @@ def is_test_src(p):
     return is_c(p) and p.startswith("src/") and not p.startswith(NON_TEST_DIRS)
 
 
+GENERATED_FIXTURES = (".log", ".original")
+
+
 def is_textual(p):
-    return not (p.startswith("fwts-test/") and p.endswith(".log"))
+    # expected outputs and iasl fixtures mirror tool output, trailing blanks included
+    return not (p.startswith("fwts-test/") and p.endswith(GENERATED_FIXTURES))
 
 
 def rx(s):

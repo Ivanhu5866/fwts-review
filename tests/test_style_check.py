@@ -135,6 +135,10 @@ def test_expected_log_skipped():
     assert rules([("fwts-test/foo-0001/foo-0001.log", 1, "x  ")]) == []
 
 
+def test_generated_fixture_skipped():
+    assert rules([("fwts-test/disassemble-0001/SSDT3.dsl.original", 1, "x  ")]) == []
+
+
 def test_utilities_may_printf():
     assert "printf-in-test" not in rules(
         [("src/utilities/kernelscan.c", 1, '\tprintf("x");')])

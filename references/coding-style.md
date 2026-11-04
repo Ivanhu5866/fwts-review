@@ -29,7 +29,7 @@ How to check:
 
 ## 2a. Trailing bytes and file hygiene (auto)
 Quick check: `git diff --check <base>..HEAD` (or `git show --check`) flags trailing whitespace, a space before a tab, and blank lines at the end of a file.
-- [ ] No trailing spaces or tabs at the end of a line, in any file the patch touches: `.c`, `.h`, `Makefile.am`, `fwts-test/*.sh`, expected `.log` files (69 legacy lines, mostly a license line in `fwts-test/*/test-*.sh`)
+- [ ] No trailing spaces or tabs at the end of a line, in any file the patch touches: `.c`, `.h`, `Makefile.am`, `fwts-test/*.sh` (57 legacy `test-*.sh` files, mostly the license line). Exempt: expected `fwts-test/**/*.log` and iasl `*.original` fixtures, which mirror tool output (308 legacy `.log` files carry trailing blanks)
 - [ ] No whitespace after a line-continuation `\` (macros, Makefile.am)
 - [ ] No blank lines at the end of a file (3 legacy files: clog.c, fwts_json.c, fwts_pipeio.c)
 - [ ] File ends with exactly one `\n`

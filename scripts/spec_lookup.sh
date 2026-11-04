@@ -5,7 +5,13 @@
 #   spec_lookup.sh list SUBDIR                    list documents in the spec library
 #   spec_lookup.sh pdf SUBDIR REGEX [NAME_GLOB]   search pdf/docx/odt/txt documents (page or line)
 #   spec_lookup.sh actbl SIG                      print ACPICA actbl*.h structs for a table
-# Case-insensitive. Env: ACPI_SPEC_DIR SPEC_DOC_DIR SPEC_CACHE_DIR FWTS_REPO MAX
+# REGEX is a POSIX ERE matched case-insensitively: the input is lowercased and so
+# is every REGEX character not preceded by a backslash (so \S, \. and \( keep their
+# meaning). Write bracket classes in lowercase or case-agnostic form ([a-z],
+# not [A-Z] or [[:upper:]]). \S \w \y etc. are gawk-only extensions.
+# SIG may be a signature (APIC, "RSD PTR") or an ACPICA name (MADT).
+# Exit 2 on usage/regex/path errors, 1 if actbl finds nothing.
+# Env: ACPI_SPEC_DIR SPEC_DOC_DIR SPEC_CACHE_DIR FWTS_REPO MAX
 set -u
 ACPI_SPEC_DIR=${ACPI_SPEC_DIR:-$HOME/work/ACPI_spec}
 SPEC_DOC_DIR=${SPEC_DOC_DIR:-$HOME/CloudStation/Document}
@@ -14,7 +20,25 @@ FWTS_REPO=${FWTS_REPO:-$HOME/work/fwts}
 MAX=${MAX:-40}
 
 die() { echo "spec_lookup: $*" >&2; exit 2; }
-usage() { sed -n '2,9p' "$0" >&2; exit 2; }
+usage() { sed -n '2,14p' "$0" >&2; exit 2; }
+
+lower_re() {	# lowercase REGEX except characters escaped by a backslash
+	local s=$1 o= c
+	while [ -n "$s" ]; do
+		c=${s:0:1}
+		if [ "$c" = '\' ]; then
+			o+=${s:0:2}; s=${s:2}
+		else
+			o+=${c,,}; s=${s:1}
+		fi
+	done
+	printf '%s' "$o"
+}
+
+check_re() {	# the regex goes through ENVIRON: awk -v would process its escapes
+	RE=$1 awk 'BEGIN { if ("" ~ ENVIRON["RE"]) x = 1 }' >/dev/null ||
+		die "invalid regex: $1"
+}
 
 cmd_update() {
 	git -C "$ACPI_SPEC_DIR" pull --ff-only -q 2>&1 ||
@@ -23,35 +47,53 @@ cmd_update() {
 }
 
 cmd_acpi() {
+	local re
 	[ -d "$ACPI_SPEC_DIR/source" ] || die "no $ACPI_SPEC_DIR/source"
-	awk -v re="$1" '
-		FNR == 1 { head = ""; prev = "" }
+	re=$(lower_re "$1")
+	check_re "$re"
+	# A match is held back one line so a heading title line, recognised only
+	# once its underline is read, is labelled with its own heading.
+	RE=$re awk '
+		function flush() {
+			if (pn) printf "%s:%d [%s] %s\n", pf, pn, ph, pt
+			pn = 0
+		}
+		BEGIN { re = ENVIRON["RE"] }
+		FNR == 1 {
+			flush(); head = ""; prev = ""
+			n = split(FILENAME, p, "/"); fn = p[n]
+		}
 		/^(=+|-+|~+|\^+|"+|\*+|#+)$/ && length($0) >= 3 && prev !~ /^[ \t]*$/ {
-			head = prev; prev = $0; next
+			head = prev
+			if (pn == FNR - 1) ph = head
+			flush(); prev = $0; next
 		}
-		tolower($0) ~ tolower(re) {
-			n = split(FILENAME, p, "/")
-			printf "%s:%d [%s] %s\n", p[n], FNR, head, $0
-		}
-		{ prev = $0 }' "$ACPI_SPEC_DIR"/source/*.rst | head -n "$MAX"
+		{ flush() }
+		tolower($0) ~ re { pf = fn; pn = FNR; ph = head; pt = $0 }
+		{ prev = $0 }
+		END { flush() }' "$ACPI_SPEC_DIR"/source/*.rst | head -n "$MAX"
 }
 
 list_docs() {	# SUBDIR [GLOB]
 	[ -d "$SPEC_DOC_DIR/$1" ] || die "no $SPEC_DOC_DIR/$1"
 	find "$SPEC_DOC_DIR/$1" -type f -iname "${2:-*}" \
 		\( -iname '*.pdf' -o -iname '*.docx' -o -iname '*.odt' -o -iname '*.txt' \) |
-		sort -V -r
+		# newest first: version-sort on the basename with [._ -] runs as "."
+		awk '{ n = split($0, p, "/"); k = p[n]; gsub(/[._ -]+/, ".", k); print k "\t" $0 }' |
+		sort -t "$(printf '\t')" -k1,1Vr | cut -f2-
 }
 
 to_text() {	# FILE -> prints cache path
-	local f=$1 key out
+	local f=$1 key out tmp
 	key=$(printf '%s:%s' "$f" "$(stat -c %Y "$f")" | sha1sum | cut -c1-40)
 	out=$SPEC_CACHE_DIR/$key.txt
 	mkdir -p "$SPEC_CACHE_DIR"
 	if [ ! -s "$out" ]; then
+		# convert to a temp file so an interrupted run never leaves a truncated cache
+		tmp=$out.tmp.$$
 		case "${f,,}" in
-		*.pdf) pdftotext -layout "$f" "$out" 2>/dev/null || { rm -f "$out"; return 1; } ;;
-		*.docx|*.odt) python3 - "$f" "$out" <<'EOF' || return 1
+		*.pdf) pdftotext -layout "$f" "$tmp" 2>/dev/null ;;
+		*.docx|*.odt) python3 - "$f" "$tmp" <<'EOF'
 import html, re, sys, zipfile
 f, out = sys.argv[1], sys.argv[2]
 name = "content.xml" if f.lower().endswith(".odt") else "word/document.xml"
@@ -59,27 +101,30 @@ x = zipfile.ZipFile(f).read(name).decode("utf-8", "replace")
 x = re.sub(r"</(?:w:p|text:p|text:h)>", "\n", x)
 x = re.sub(r"<(?:w:tab|text:tab)/>", "\t", x)
 x = re.sub(r"<[^>]+>", "", x)
-open(out, "w").write(html.unescape(x))
+open(out, "w", encoding="utf-8").write(html.unescape(x))
 EOF
 			;;
-		*) cp "$f" "$out" ;;
-		esac
+		*) cp "$f" "$tmp" ;;
+		esac && mv -f "$tmp" "$out" || { rm -f "$tmp"; return 1; }
 	fi
 	echo "$out"
 }
 
 cmd_pdf() {	# SUBDIR REGEX [GLOB]
-	local f txt rel paged hits left=$MAX
+	local f txt rel paged hits re left=$MAX
+	[ -d "$SPEC_DOC_DIR/$1" ] || die "no $SPEC_DOC_DIR/$1"
+	re=$(lower_re "$2")
+	check_re "$re"
 	[ "$left" -gt 0 ] 2>/dev/null || return 0
 	# Stop converting further documents once MAX lines have been printed.
 	list_docs "$1" "${3:-*}" | while IFS= read -r f; do
 		txt=$(to_text "$f") || { echo "WARNING: cannot convert $f" >&2; continue; }
 		rel=${f#"$SPEC_DOC_DIR/$1/"}
 		case "${f,,}" in *.docx|*.odt) paged=0 ;; *) paged=1 ;; esac
-		hits=$(awk -v re="$2" -v fn="$rel" -v paged="$paged" -v max="$left" '
-			BEGIN { p = 1; n = 0 }
+		hits=$(RE=$re awk -v fn="$rel" -v paged="$paged" -v max="$left" '
+			BEGIN { re = ENVIRON["RE"]; p = 1; n = 0 }
 			{ p += gsub(/\f/, "") }
-			tolower($0) ~ tolower(re) {
+			tolower($0) ~ re {
 				sub(/^[ \t]+/, "")
 				if (paged) printf "%s p.%d: %s\n", fn, p, $0
 				else printf "%s l.%d: %s\n", fn, FNR, $0
@@ -93,16 +138,34 @@ cmd_pdf() {	# SUBDIR REGEX [GLOB]
 }
 
 cmd_actbl() {
-	local sig
-	sig=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
-	awk -v sig="$sig" '
+	local arg names out hdrs=("$FWTS_REPO"/src/acpica/source/include/actbl*.h)
+	arg=$(printf '%s' "$1" | tr -cd 'A-Za-z0-9' | tr 'a-z' 'A-Z')
+	[ -n "$arg" ] || die "bad signature: $1"
+	# map signature or name via '#define ACPI_SIG_<NAME> "<sig>"' (APIC -> madt)
+	names=$(awk -v a="$arg" '
+		/^#define[ \t]+ACPI_SIG_[A-Za-z0-9_]+[ \t]+"/ {
+			name = $2; sub(/^ACPI_SIG_/, "", name)
+			sig = $0; sub(/^[^"]*"/, "", sig); sub(/".*/, "", sig)
+			gsub(/[^A-Za-z0-9]/, "", sig)
+			if (toupper(name) == a || toupper(sig) == a) print tolower(name)
+		}' "${hdrs[@]}" | sort -u | tr '\n' ' ')
+	[ -n "$names" ] || names=$(printf '%s' "$arg" | tr 'A-Z' 'a-z')
+	out=$(awk -v names="$names" '
+		BEGIN { n = split(names, nm, " ") }
 		/^typedef struct acpi_/ {
-			keep = ($3 == "acpi_table_" sig || index($3, "acpi_" sig "_") == 1)
+			keep = 0
+			for (i = 1; i <= n; i++) {
+				t = "acpi_table_" nm[i]
+				if ($3 == t || index($3, t "_") == 1 ||
+				    index($3, "acpi_" nm[i] "_") == 1)
+					keep = 1
+			}
 			if (keep) printf "%s:%d\n", FILENAME, FNR
 		}
 		keep { print }
-		keep && /^}/ { keep = 0; print "" }' \
-		"$FWTS_REPO"/src/acpica/source/include/actbl*.h
+		keep && /^}/ { keep = 0; print "" }' "${hdrs[@]}")
+	[ -n "$out" ] || { echo "spec_lookup: no ACPICA struct for $1" >&2; exit 1; }
+	printf '%s\n' "$out"
 }
 
 case "${1:-}" in

@@ -84,3 +84,137 @@ def test_pdf_max_stops_converting(tmp_path):
             SPEC_CACHE_DIR=str(cache), MAX="1")
     assert r.stdout == "spec_b.txt p.1: GetVariable one\n"
     assert len(list(cache.iterdir())) == 1
+
+
+def _rst(tmp_path, text):
+    src = tmp_path / "source"
+    src.mkdir()
+    (src / "06_Dev.rst").write_text(text)
+    return str(tmp_path)
+
+
+def test_acpi_regex_escapes_kept(tmp_path):
+    d = _rst(tmp_path, "Dev\n===\n\nCall _OSC(Arg0) here.\naxb\na.b\nNo\\Space\n")
+    r = run("acpi", r"_OSC\(", ACPI_SPEC_DIR=d)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "06_Dev.rst:4 [Dev] Call _OSC(Arg0) here.\n"
+    r = run("acpi", r"a\.b", ACPI_SPEC_DIR=d)
+    assert r.stdout == "06_Dev.rst:6 [Dev] a.b\n"
+    r = run("acpi", r"No\\S", ACPI_SPEC_DIR=d)
+    assert r.stdout == "06_Dev.rst:7 [Dev] No\\Space\n"
+
+
+GAWK = "GNU Awk" in subprocess.run(["awk", "--version"], capture_output=True,
+                                   text=True).stdout
+
+
+@pytest.mark.skipif(not GAWK, reason="\\S is a gawk regex extension")
+def test_acpi_gawk_escape_case_kept(tmp_path):
+    d = _rst(tmp_path, "Dev\n===\n\naxb\na b\n")
+    r = run("acpi", r"^a\Sb$", ACPI_SPEC_DIR=d)
+    assert r.stdout == "06_Dev.rst:4 [Dev] axb\n"
+
+
+def test_bad_regex_exits_2(tmp_path):
+    d = _rst(tmp_path, "x\n")
+    assert run("acpi", "_OSC(", ACPI_SPEC_DIR=d).returncode == 2
+    docs = tmp_path / "docs/A"
+    docs.mkdir(parents=True)
+    (docs / "a.txt").write_text("x\n")
+    r = run("pdf", "A", "_OSC(", SPEC_DOC_DIR=str(tmp_path / "docs"),
+            SPEC_CACHE_DIR=str(tmp_path / "cache"))
+    assert r.returncode == 2
+    assert not (tmp_path / "cache").exists()
+
+
+def test_pdf_missing_subdir_exits_2(tmp_path):
+    r = run("pdf", "NOPE", "x", SPEC_DOC_DIR=str(tmp_path))
+    assert r.returncode == 2 and "NOPE" in r.stderr
+
+
+def test_acpi_heading_line_labels_itself(tmp_path):
+    d = _rst(tmp_path, "Top\n===\n\nIO Remapping Table\n------------------\n")
+    r = run("acpi", "remapping", ACPI_SPEC_DIR=d)
+    assert r.stdout == "06_Dev.rst:4 [IO Remapping Table] IO Remapping Table\n"
+
+
+def test_list_newest_first_by_basename(tmp_path):
+    d = tmp_path / "docs/X"
+    (d / "sub").mkdir(parents=True)
+    for n in ("X_6_4.txt", "X_6.6.txt", "sub/X_6_5_Aug.txt"):
+        (d / n).write_text("x\n")
+    r = run("list", "X", SPEC_DOC_DIR=str(tmp_path / "docs"))
+    names = [os.path.basename(l) for l in r.stdout.split()]
+    assert names == ["X_6.6.txt", "X_6_5_Aug.txt", "X_6_4.txt"]
+
+
+def test_interrupted_conversion_not_reused(tmp_path):
+    d = tmp_path / "docs/U"
+    d.mkdir(parents=True)
+    (d / "spec.pdf").write_bytes(b"%PDF-fake")
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    fake = shim / "pdftotext"
+    env = dict(SPEC_DOC_DIR=str(tmp_path / "docs"),
+               SPEC_CACHE_DIR=str(tmp_path / "cache"),
+               PATH=f"{shim}:{os.environ['PATH']}")
+    # First conversion is killed after writing partial output.
+    fake.write_text('#!/bin/sh\necho partial > "$3"\nkill -9 $PPID\n')
+    fake.chmod(0o755)
+    run("pdf", "U", "zzz", **env)
+    fake.write_text('#!/bin/sh\nprintf "partial\\nfull match\\n" > "$3"\n')
+    r = run("pdf", "U", "full", **env)
+    assert r.stdout == "spec.pdf p.1: full match\n"
+
+
+ACTBL_H = """\
+#define ACPI_SIG_MADT           "APIC"      /* Multiple APIC */
+#define ACPI_SIG_FADT           "FACP"      /* Fixed */
+#define ACPI_SIG_TCPA           "TCPA"      /* TCPA */
+#define ACPI_SIG_RSDP           "RSD PTR "  /* RSDP */
+typedef struct acpi_table_madt
+{
+    UINT32 Address;
+} ACPI_TABLE_MADT;
+
+typedef struct acpi_madt_io_apic
+{
+    UINT8 Id;
+} ACPI_MADT_IO_APIC;
+
+typedef struct acpi_table_fadt
+{
+    UINT32 Facs;
+} ACPI_TABLE_FADT;
+
+typedef struct acpi_table_tcpa_hdr
+{
+    UINT16 PlatformClass;
+} ACPI_TABLE_TCPA_HDR;
+
+typedef struct acpi_table_rsdp
+{
+    char Signature[8];
+} ACPI_TABLE_RSDP;
+"""
+
+
+def _actbl(tmp_path, sig):
+    inc = tmp_path / "src/acpica/source/include"
+    inc.mkdir(parents=True, exist_ok=True)
+    (inc / "actbl.h").write_text(ACTBL_H)
+    return run("actbl", sig, FWTS_REPO=str(tmp_path))
+
+
+def test_actbl_signature_aliases(tmp_path):
+    apic, madt = _actbl(tmp_path, "APIC"), _actbl(tmp_path, "MADT")
+    assert apic.returncode == 0 and apic.stdout == madt.stdout
+    assert "ACPI_TABLE_MADT" in apic.stdout and "ACPI_MADT_IO_APIC" in apic.stdout
+    assert "ACPI_TABLE_FADT" in _actbl(tmp_path, "FACP").stdout
+    assert "ACPI_TABLE_TCPA_HDR" in _actbl(tmp_path, "TCPA").stdout
+    assert "ACPI_TABLE_RSDP" in _actbl(tmp_path, "RSD PTR").stdout
+
+
+def test_actbl_unknown_exits_1(tmp_path):
+    r = _actbl(tmp_path, "ZZZZ")
+    assert r.returncode == 1 and "no ACPICA struct for ZZZZ" in r.stderr

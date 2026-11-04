@@ -14,19 +14,6 @@ def run(*args, **env):
                           text=True, env={**os.environ, **env})
 
 
-def test_acpi_heading(tmp_path):
-    src = tmp_path / "source"
-    src.mkdir()
-    (src / "05_Tables.rst").write_text(
-        "Intro\n=====\n\ntext\n\n"
-        "IO Remapping Table\n------------------\n\n"
-        "The IORT signature is 'IORT'.\n")
-    r = run("acpi", "iort signature", ACPI_SPEC_DIR=str(tmp_path))
-    assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == \
-        "05_Tables.rst:9 [IO Remapping Table] The IORT signature is 'IORT'."
-
-
 def test_actbl(tmp_path):
     inc = tmp_path / "src/acpica/source/include"
     inc.mkdir(parents=True)
@@ -86,38 +73,43 @@ def test_pdf_max_stops_converting(tmp_path):
     assert len(list(cache.iterdir())) == 1
 
 
-def _rst(tmp_path, text):
-    src = tmp_path / "source"
-    src.mkdir()
-    (src / "06_Dev.rst").write_text(text)
-    return str(tmp_path)
-
-
-def test_acpi_regex_escapes_kept(tmp_path):
-    d = _rst(tmp_path, "Dev\n===\n\nCall _OSC(Arg0) here.\naxb\na.b\nNo\\Space\n")
-    r = run("acpi", r"_OSC\(", ACPI_SPEC_DIR=d)
-    assert r.returncode == 0, r.stderr
-    assert r.stdout == "06_Dev.rst:4 [Dev] Call _OSC(Arg0) here.\n"
-    r = run("acpi", r"a\.b", ACPI_SPEC_DIR=d)
-    assert r.stdout == "06_Dev.rst:6 [Dev] a.b\n"
-    r = run("acpi", r"No\\S", ACPI_SPEC_DIR=d)
-    assert r.stdout == "06_Dev.rst:7 [Dev] No\\Space\n"
-
-
 GAWK = "GNU Awk" in subprocess.run(["awk", "--version"], capture_output=True,
                                    text=True).stdout
 
 
+def _doc(tmp_path, text):
+    d = tmp_path / "docs/S"
+    d.mkdir(parents=True)
+    (d / "s.txt").write_text(text)
+    return dict(SPEC_DOC_DIR=str(tmp_path / "docs"),
+                SPEC_CACHE_DIR=str(tmp_path / "cache"))
+
+
+def test_regex_escapes_kept(tmp_path):
+    env = _doc(tmp_path, "Call _OSC(Arg0) here.\naxb\na.b\nNo\\Space\n")
+    r = run("pdf", "S", r"_OSC\(", **env)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout == "s.txt p.1: Call _OSC(Arg0) here.\n"
+    assert run("pdf", "S", r"a\.b", **env).stdout == "s.txt p.1: a.b\n"
+    assert run("pdf", "S", r"No\\S", **env).stdout == "s.txt p.1: No\\Space\n"
+
+
 @pytest.mark.skipif(not GAWK, reason="\\S is a gawk regex extension")
-def test_acpi_gawk_escape_case_kept(tmp_path):
-    d = _rst(tmp_path, "Dev\n===\n\naxb\na b\n")
-    r = run("acpi", r"^a\Sb$", ACPI_SPEC_DIR=d)
-    assert r.stdout == "06_Dev.rst:4 [Dev] axb\n"
+def test_gawk_escape_case_kept(tmp_path):
+    env = _doc(tmp_path, "axb\na b\n")
+    assert run("pdf", "S", r"^a\Sb$", **env).stdout == "s.txt p.1: axb\n"
+
+
+def test_no_match_asks_to_update_spec(tmp_path):
+    env = _doc(tmp_path, "nothing here\n")
+    r = run("pdf", "S", "startuplocality", **env)
+    assert r.returncode == 1 and r.stdout == ""
+    assert "UPDATE-SPEC:" in r.stderr and "docs/S" in r.stderr
+    r = run("pdf", "S", "x", "*nope*", **env)
+    assert r.returncode == 1 and "no document" in r.stderr
 
 
 def test_bad_regex_exits_2(tmp_path):
-    d = _rst(tmp_path, "x\n")
-    assert run("acpi", "_OSC(", ACPI_SPEC_DIR=d).returncode == 2
     docs = tmp_path / "docs/A"
     docs.mkdir(parents=True)
     (docs / "a.txt").write_text("x\n")
@@ -129,13 +121,7 @@ def test_bad_regex_exits_2(tmp_path):
 
 def test_pdf_missing_subdir_exits_2(tmp_path):
     r = run("pdf", "NOPE", "x", SPEC_DOC_DIR=str(tmp_path))
-    assert r.returncode == 2 and "NOPE" in r.stderr
-
-
-def test_acpi_heading_line_labels_itself(tmp_path):
-    d = _rst(tmp_path, "Top\n===\n\nIO Remapping Table\n------------------\n")
-    r = run("acpi", "remapping", ACPI_SPEC_DIR=d)
-    assert r.stdout == "06_Dev.rst:4 [IO Remapping Table] IO Remapping Table\n"
+    assert r.returncode == 2 and "NOPE" in r.stderr and "UPDATE-SPEC:" in r.stderr
 
 
 def test_list_newest_first_by_basename(tmp_path):

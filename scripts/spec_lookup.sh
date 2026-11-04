@@ -1,7 +1,6 @@
 #!/bin/bash
 # fwts-review spec lookup helper.
-#   spec_lookup.sh update                         git pull ~/work/ACPI_spec
-#   spec_lookup.sh acpi REGEX                     search ACPI spec RST (file:line [heading] text)
+# Specs come only from the local library ($SPEC_DOC_DIR); nothing is fetched online.
 #   spec_lookup.sh list SUBDIR                    list documents in the spec library
 #   spec_lookup.sh pdf SUBDIR REGEX [NAME_GLOB]   search pdf/docx/odt/txt documents (page or line)
 #   spec_lookup.sh actbl SIG                      print ACPICA actbl*.h structs for a table
@@ -10,16 +9,20 @@
 # meaning). Write bracket classes in lowercase or case-agnostic form ([a-z],
 # not [A-Z] or [[:upper:]]). \S \w \y etc. are gawk-only extensions.
 # SIG may be a signature (APIC, "RSD PTR") or an ACPICA name (MADT).
-# Exit 2 on usage/regex/path errors, 1 if actbl finds nothing.
-# Env: ACPI_SPEC_DIR SPEC_DOC_DIR SPEC_CACHE_DIR FWTS_REPO MAX
+# Exit 2 on usage/regex/path errors, 1 if pdf matches nothing (after an
+# 'update the spec' hint) or actbl finds nothing.
+# Env: SPEC_DOC_DIR SPEC_CACHE_DIR FWTS_REPO MAX
 set -u
-ACPI_SPEC_DIR=${ACPI_SPEC_DIR:-$HOME/work/ACPI_spec}
 SPEC_DOC_DIR=${SPEC_DOC_DIR:-$HOME/CloudStation/Document}
 SPEC_CACHE_DIR=${SPEC_CACHE_DIR:-$HOME/.cache/fwts-review/specs}
 FWTS_REPO=${FWTS_REPO:-$HOME/work/fwts}
 MAX=${MAX:-40}
 
 die() { echo "spec_lookup: $*" >&2; exit 2; }
+need_spec() {	# SUBDIR GLOB WHY
+	echo "spec_lookup: $3 in $SPEC_DOC_DIR/$1 (glob '$2')." >&2
+	echo "UPDATE-SPEC: please add or update the spec in $SPEC_DOC_DIR/$1, then rerun." >&2
+}
 usage() { sed -n '2,14p' "$0" >&2; exit 2; }
 
 lower_re() {	# lowercase REGEX except characters escaped by a backslash
@@ -38,40 +41,6 @@ lower_re() {	# lowercase REGEX except characters escaped by a backslash
 check_re() {	# the regex goes through ENVIRON: awk -v would process its escapes
 	RE=$1 awk 'BEGIN { if ("" ~ ENVIRON["RE"]) x = 1 }' >/dev/null ||
 		die "invalid regex: $1"
-}
-
-cmd_update() {
-	git -C "$ACPI_SPEC_DIR" pull --ff-only -q 2>&1 ||
-		echo "WARNING: ACPI_spec pull failed; using local copy" >&2
-	git -C "$ACPI_SPEC_DIR" log -1 --format='ACPI_spec at %h (%cs) %s'
-}
-
-cmd_acpi() {
-	local re
-	[ -d "$ACPI_SPEC_DIR/source" ] || die "no $ACPI_SPEC_DIR/source"
-	re=$(lower_re "$1")
-	check_re "$re"
-	# A match is held back one line so a heading title line, recognised only
-	# once its underline is read, is labelled with its own heading.
-	RE=$re awk '
-		function flush() {
-			if (pn) printf "%s:%d [%s] %s\n", pf, pn, ph, pt
-			pn = 0
-		}
-		BEGIN { re = ENVIRON["RE"] }
-		FNR == 1 {
-			flush(); head = ""; prev = ""
-			n = split(FILENAME, p, "/"); fn = p[n]
-		}
-		/^(=+|-+|~+|\^+|"+|\*+|#+)$/ && length($0) >= 3 && prev !~ /^[ \t]*$/ {
-			head = prev
-			if (pn == FNR - 1) ph = head
-			flush(); prev = $0; next
-		}
-		{ flush() }
-		tolower($0) ~ re { pf = fn; pn = FNR; ph = head; pt = $0 }
-		{ prev = $0 }
-		END { flush() }' "$ACPI_SPEC_DIR"/source/*.rst | head -n "$MAX"
 }
 
 list_docs() {	# SUBDIR [GLOB]
@@ -111,13 +80,23 @@ EOF
 }
 
 cmd_pdf() {	# SUBDIR REGEX [GLOB]
-	local f txt rel paged hits re left=$MAX
-	[ -d "$SPEC_DOC_DIR/$1" ] || die "no $SPEC_DOC_DIR/$1"
+	local re docs out
+	[ -d "$SPEC_DOC_DIR/$1" ] ||
+		{ need_spec "$1" "${3:-*}" "no such directory"; exit 2; }
 	re=$(lower_re "$2")
 	check_re "$re"
-	[ "$left" -gt 0 ] 2>/dev/null || return 0
+	[ "$MAX" -gt 0 ] 2>/dev/null || return 0
+	docs=$(list_docs "$1" "${3:-*}")
+	[ -n "$docs" ] || { need_spec "$1" "${3:-*}" "no document"; exit 1; }
+	out=$(printf '%s\n' "$docs" | search_docs "$1" "$re")
+	[ -n "$out" ] || { need_spec "$1" "${3:-*}" "no match for '$2'"; exit 1; }
+	printf '%s\n' "$out"
+}
+
+search_docs() {	# SUBDIR RE; document paths on stdin
+	local f txt rel paged hits re=$2 left=$MAX
 	# Stop converting further documents once MAX lines have been printed.
-	list_docs "$1" "${3:-*}" | while IFS= read -r f; do
+	while IFS= read -r f; do
 		txt=$(to_text "$f") || { echo "WARNING: cannot convert $f" >&2; continue; }
 		rel=${f#"$SPEC_DOC_DIR/$1/"}
 		case "${f,,}" in *.docx|*.odt) paged=0 ;; *) paged=1 ;; esac
@@ -169,8 +148,6 @@ cmd_actbl() {
 }
 
 case "${1:-}" in
-update) cmd_update ;;
-acpi)	[ $# -ge 2 ] || usage; cmd_acpi "$2" ;;
 list)	[ $# -ge 2 ] || usage; list_docs "$2" ;;
 pdf)	[ $# -ge 3 ] || usage; cmd_pdf "$2" "$3" "${4:-}" ;;
 actbl)	[ $# -ge 2 ] || usage; cmd_actbl "$2" ;;

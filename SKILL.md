@@ -18,6 +18,8 @@ References (in `~/.copilot/skills/fwts-review/references/`):
 - `coding-style.md`: the style rules and their rationale
 - `spec-map.md`: subject → spec source and the exact lookup command
 
+Specs: use **only** the local library `~/CloudStation/Document/`. Never search or fetch specs online (no `web_fetch`/`curl`).
+
 ## Phase 0: fetch
 
 ```bash
@@ -85,18 +87,16 @@ If the PR or patch references an issue, the commit should carry `BugLink:` or `F
 
 ## Phase 2: spec content
 
-1. `$S/spec_lookup.sh update` (a warning is OK).
-2. Identify the subjects in the diff:
+1. Identify the subjects in the diff:
    - table signatures and `src/acpi/<sig>/`
    - `_XXX` methods
    - SMBIOS types, UEFI variables, TPM structures
    - spec URLs in comments or the commit message
-3. Resolve each subject through `references/spec-map.md` (it gives the subdir and name glob per subject):
-   - ACPI: `$S/spec_lookup.sh acpi '<regex>'` → `file.rst:line [heading] text`; then `view ~/work/ACPI_spec/source/<file>` around that line to read the full table.
-   - others: `$S/spec_lookup.sh pdf <SUBDIR> '<regex>' '<name glob>'`. **Always** pass the glob from spec-map (e.g. `'*IORT*'`); without one every document in the subdir gets converted. Use `list <SUBDIR>` (newest first) to choose a version. Hits are `file p.N: text` (N = physical PDF page; read it with `pdftotext -layout -f N -l N '<file>' -`) or `file l.N: text` for `.docx`/`.odt`.
+2. Resolve each subject through `references/spec-map.md` (it gives the subdir and name glob per subject):
+   - `$S/spec_lookup.sh pdf <SUBDIR> '<regex>' '<name glob>'`. **Always** pass the glob from spec-map (e.g. `'*IORT*'`); without one every document in the subdir gets converted. Use `list <SUBDIR>` (newest first) to choose a version. ACPI: `pdf ACPI '<regex>' '*ACPI_Spec_6.6*'` (the newest `ACPI_Spec_*`). Hits are `file p.N: text` (N = physical PDF page; read it with `pdftotext -layout -f N -l N '<file>' -`) or `file l.N: text` for `.docx`/`.odt`.
    - layout cross-check: `$S/spec_lookup.sh actbl <SIG|NAME>` (`APIC` or `MADT`, `FACP` or `FADT`, `TCPA`); exit 1 = no ACPICA struct.
    - Regex: POSIX ERE, case-insensitive (input is lowercased; write the regex in lowercase, `[a-z]` not `[A-Z]`). `\S`, `\w`, bracket classes work. Output is capped at 40 lines (`MAX=` env to change); narrow the regex rather than raising it.
-4. Verify:
+3. Verify:
    - offsets and widths in fwts structs (`src/lib/include/fwts_acpi.h`) against the spec and ACPICA
    - length and revision checks
    - reserved-must-be-zero fields
@@ -105,7 +105,12 @@ If the PR or patch references an issue, the commit should carry `BugLink:` or `F
    - version gating (which revision added a field)
    - must vs should, and so the severity: CRITICAL/HIGH only for "must" violations
    - section numbers cited
-5. If you can't find a source, try the URL cited in the source or the commit message with `web_fetch` (uefi.org returns 403, so use the local copies). Otherwise mark the claim **unverified** and ask the user for the document with `ask_user`.
+4. Missing or outdated spec. This applies when:
+   - `spec_lookup.sh` prints `UPDATE-SPEC:` (no directory, no document or no match), or
+   - spec-map says **not in library**, or
+   - the diff or commit cites a newer revision than the newest local copy (for example "ACPI 6.7" or "PFP 1.07").
+
+   Do **not** go online. Mark the claim **unverified**. Use `ask_user` to tell the user which document and revision is needed and where to put it: `~/CloudStation/Document/<SUBDIR>/`. Rerun the lookup once they confirm. If they skip, keep the claim unverified and list it under "Specs to update" in the report.
 
 Every claim gets a row in the report: `claim | source (file + heading/line, or pdf + page) | ✅ / ❌ / unverified`.
 
@@ -165,7 +170,8 @@ Input: <url or range> | Base: <sha8> | Head: <sha8> | Author: <name> | Date: <to
 ## Blocking           (- path:line — issue — why)
 ## Should fix
 ## Nits
-## Spec verification  (| claim | source | result |)
+## Spec verification  (| claim | source | result |; first line: the local spec files/versions used)
+## Specs to update   (missing/outdated documents for ~/CloudStation/Document/, or "none")
 ## Build/test matrix  (from logs/matrix.tsv; note SKIPs)
 ## Checklist          (every item from review-checklist.md: ✅/❌/N/A)
 ```
@@ -182,4 +188,4 @@ Tone: concise, specific, cite `file:line` and the spec section, and suggest the 
 ~/.copilot/skills/fwts-review/scripts/fetch.sh --cleanup <ID>
 ```
 
-Expect `CLEANED=<ID>`. Tell the user the verdict, the counts (blocking, should-fix, nits) and the paths to `report.md` and `reply.md`.
+Expect `CLEANED=<ID>`. Tell the user the verdict, the counts (blocking, should-fix, nits) and the paths to `report.md` and `reply.md`. If "Specs to update" is not empty, end with: `Please update these specs in ~/CloudStation/Document/: …`.

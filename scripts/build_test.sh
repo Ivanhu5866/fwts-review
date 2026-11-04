@@ -109,9 +109,9 @@ else
 	run_cpp "$MB" "$LOGS/cppcheck-base.txt"
 	run_cpp "$HEAD" "$LOGS/cppcheck-head.txt"
 	# a finding is new when its per-key count grew; print it once per extra occurrence
-	awk 'FNR == 1 { f++ }
-		{ n = $1; k = $0; sub(/^ *[0-9]+ /, "", k) }
-		f == 1 { b[k] = n; next }
+	# (FILENAME, not FNR==1, so an empty base file still works)
+	awk '{ n = $1; k = $0; sub(/^ *[0-9]+ /, "", k) }
+		FILENAME == ARGV[1] { b[k] = n; next }
 		{ for (i = b[k] + 1; i <= n; i++) print k }' \
 		<(norm "$LOGS/cppcheck-base.txt") <(norm "$LOGS/cppcheck-head.txt") \
 		> "$LOGS/cppcheck-new.txt"

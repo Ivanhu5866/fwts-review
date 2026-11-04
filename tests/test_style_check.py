@@ -139,6 +139,51 @@ def test_generated_fixture_skipped():
     assert rules([("fwts-test/disassemble-0001/SSDT3.dsl.original", 1, "x  ")]) == []
 
 
+@pytest.mark.parametrize("path", [
+    "fwts-test/klog-0001/klog.txt", "fwts-test/dmi-0001/dmi.dat"])
+def test_fwts_test_fixtures_skipped(path):
+    assert rules([(path, 1, "x  \u00e9")]) == []
+
+
+@pytest.mark.parametrize("path", [
+    "fwts-test/foo-0001/test-0001.sh", "fwts-test/Makefile.am"])
+def test_fwts_test_scripts_checked(path):
+    assert {"trailing-ws", "non-ascii"} <= set(rules([(path, 1, "x \u00e9 ")]))
+
+
+@pytest.mark.parametrize("path", [
+    "src/foo/foo.h", "Makefile.am", "src/Makefile.am", "configure.ac",
+    "scripts/x.sh"])
+def test_non_ascii_in_code_and_build_files(path):
+    assert "non-ascii" in rules([(path, 1, "# caf\u00e9")])
+
+
+@pytest.mark.parametrize("path", ["doc/fwts.1", "debian/changelog", "README"])
+def test_non_ascii_allowed_in_docs(path):
+    assert "non-ascii" not in rules([(path, 1, "Andr\u00e9 Name")])
+
+
+WRAP = "\tfwts_failed(fw, LOG_LEVEL_HIGH,"
+
+
+@pytest.mark.parametrize("first", [
+    WRAP, "\tfwts_failed(fw, fwts_level(LOG_LEVEL_MEDIUM),"])
+def test_label_camel_wrapped(first):
+    assert "label-camel" in rules(
+        [(C, 1, first), (C, 2, '\t\t"bad value", "x");')])
+
+
+@pytest.mark.parametrize("second", [
+    '\t\t"FooBadValue", "x %s", s);', '\t\ttmp, "bad value");'])
+def test_label_camel_wrapped_ok(second):
+    assert "label-camel" not in rules([(C, 1, WRAP), (C, 2, second)])
+
+
+def test_label_camel_wrapped_needs_adjacent_line():
+    assert "label-camel" not in rules(
+        [(C, 1, WRAP), (C, 5, '\t\t"bad value", "x");')])
+
+
 def test_utilities_may_printf():
     assert "printf-in-test" not in rules(
         [("src/utilities/kernelscan.c", 1, '\tprintf("x");')])
@@ -193,36 +238,56 @@ def _git(repo, *a):
                    capture_output=True)
 
 
-def test_run_reports_only_new_lines(tmp_path):
+def _repo(tmp_path):
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "t@e.com")
     _git(tmp_path, "config", "user.name", "T")
-    f = tmp_path / "src/t/t.c"
-    f.parent.mkdir(parents=True)
-    f.write_text("x = 1;  \n")
-    msg = "t: add t\n\nBody.\n\nSigned-off-by: T <t@e.com>"
-    _git(tmp_path, "add", "-A")
-    _git(tmp_path, "commit", "-q", "-m", msg)
-    base = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
-                          capture_output=True, text=True).stdout.strip()
-    f.write_text("x = 1;  \n\ty = 2; \n")
-    _git(tmp_path, "commit", "-q", "-am", msg)
-    got = [(x.path, x.line, x.rule) for x in sc.run(str(tmp_path), base, "HEAD")]
+    _git(tmp_path, "config", "core.autocrlf", "false")
+    return tmp_path
+
+
+MSG = "t: add t\n\nBody.\n\nSigned-off-by: T <t@e.com>"
+
+
+def _commit(repo, path, data):
+    f = repo / path
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(data.encode())
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", MSG)
+
+
+def test_run_reports_only_new_lines(tmp_path):
+    repo = _repo(tmp_path)
+    _commit(repo, "src/t/t.c", "x = 1;  \n")
+    _commit(repo, "src/t/t.c", "x = 1;  \n\ty = 2; \n")
+    got = [(x.path, x.line, x.rule) for x in sc.run(str(repo), "HEAD~1", "HEAD")]
     assert got == [("src/t/t.c", 2, "trailing-ws")]
 
 
-def test_run_label_dup(tmp_path):
-    _git(tmp_path, "init", "-q")
-    _git(tmp_path, "config", "user.email", "t@e.com")
-    _git(tmp_path, "config", "user.name", "T")
-    f = tmp_path / "src/t/t.c"
-    f.parent.mkdir(parents=True)
-    line = '\tfwts_failed(fw, LOG_LEVEL_HIGH, "TBad", "x");\n'
-    f.write_text(line)
-    msg = "t: add t\n\nBody.\n\nSigned-off-by: T <t@e.com>"
-    _git(tmp_path, "add", "-A")
-    _git(tmp_path, "commit", "-q", "-m", msg)
-    f.write_text(line + line)
-    _git(tmp_path, "commit", "-q", "-am", msg)
-    got = [x.rule for x in sc.run(str(tmp_path), "HEAD~1", "HEAD")]
+def test_run_crlf(tmp_path):
+    repo = _repo(tmp_path)
+    _commit(repo, "src/t/t.c", "\tx = 1;\n")
+    _commit(repo, "src/t/t.c", "\tx = 1;\n\ty = 2;\r\n")
+    got = [(x.path, x.line, x.rule) for x in sc.run(str(repo), "HEAD~1", "HEAD")]
+    assert got == [("src/t/t.c", 2, "cr")]
+
+
+@pytest.mark.parametrize("call", [
+    '\tfwts_failed(fw, LOG_LEVEL_HIGH, "TBad", "x");\n',
+    '\tfwts_failed(fw, LOG_LEVEL_HIGH,\n\t\t"TBad", "x");\n'],
+    ids=["single-line", "wrapped"])
+def test_run_label_dup(tmp_path, call):
+    repo = _repo(tmp_path)
+    _commit(repo, "src/t/t.c", call)
+    _commit(repo, "src/t/t.c", call + call)
+    got = [x.rule for x in sc.run(str(repo), "HEAD~1", "HEAD")]
     assert got == ["label-dup"]
+
+
+def test_empty_range_is_an_error(tmp_path, capsys):
+    repo = _repo(tmp_path)
+    _commit(repo, "src/t/t.c", "\tx = 1;\n")
+    _commit(repo, "src/t/t.c", "\tx = 2;\n")
+    assert sc.main(["--repo", str(repo), "HEAD", "HEAD~1"]) == 2
+    assert "style_check: no commits in HEAD..HEAD~1" in capsys.readouterr().err

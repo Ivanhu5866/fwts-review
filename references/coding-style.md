@@ -29,13 +29,13 @@ How to check:
 
 ## 2a. Trailing bytes and file hygiene (auto)
 Quick check: `git diff --check <base>..HEAD` (or `git show --check`) flags trailing whitespace, a space before a tab, and blank lines at the end of a file.
-- [ ] No trailing spaces or tabs at the end of a line, in any file the patch touches: `.c`, `.h`, `Makefile.am`, `fwts-test/*.sh` (57 legacy `test-*.sh` files, mostly the license line). Exempt: expected `fwts-test/**/*.log` and iasl `*.original` fixtures, which mirror tool output (308 legacy `.log` files carry trailing blanks)
+- [ ] No trailing spaces or tabs at the end of a line, in any file the patch touches: `.c`, `.h`, `Makefile.am`, `fwts-test/*.sh` (57 legacy `test-*.sh` files, mostly the license line). In `fwts-test/` only `*.sh` and Makefiles are checked; every other file there (expected `.log`, iasl `*.original`, `klog.txt`, `.dat`, ...) is a fixture that mirrors tool output and is exempt (308 legacy `.log` files carry trailing blanks)
 - [ ] No whitespace after a line-continuation `\` (macros, Makefile.am)
 - [ ] No blank lines at the end of a file (3 legacy files: clog.c, fwts_json.c, fwts_pipeio.c)
 - [ ] File ends with exactly one `\n`
 - [ ] LF line endings only, no CR/CRLF (none in the tree today)
 - [ ] No UTF-8 BOM and no control characters other than tab and newline
-- [ ] ASCII only in code and comments; don't paste smart quotes, `®` or `–` from the spec PDF (9 legacy lines)
+- [ ] ASCII only in code and comments (`*.c`, `*.h`) and build files (`Makefile.am`, `configure.ac`, `*.sh`); don't paste smart quotes, `®` or `–` from the spec PDF (9 legacy lines). Docs and packaging (`doc/fwts.1`, `debian/changelog`) may carry non-ASCII contributor names
 - [ ] No space before `\n` in strings, and no trailing space at the end of a log message
 - [ ] No trailing whitespace in the commit message
 

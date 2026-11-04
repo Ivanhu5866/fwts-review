@@ -4,7 +4,8 @@
 Usage: style_check.py [--repo DIR] [--json FILE] BASE HEAD
 
 Prints "<sha8> <path>:<line> <rule> <message>" for each finding.
-Exit status: 0 on success (with or without findings), 2 on git error.
+Exit status: 0 on success (with or without findings), 2 on git error or an
+empty BASE..HEAD range.
 The rules come from references/coding-style.md. Findings are hints: the
 reviewer drops false positives before writing the report.
 """
@@ -29,11 +30,12 @@ class Finding:
 
 
 def git(repo, *args, check=True):
-    r = subprocess.run(["git", "-C", repo, *args], capture_output=True,
-                       text=True, errors="replace")
+    # bytes + decode: text=True would turn CRLF into LF and hide the cr rule
+    r = subprocess.run(["git", "-C", repo, *args], capture_output=True)
     if check and r.returncode:
-        raise RuntimeError(f"git {' '.join(args)}: {r.stderr.strip()}")
-    return r.stdout
+        err = r.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(f"git {' '.join(args)}: {err}")
+    return r.stdout.decode("utf-8", "replace")
 
 
 def blob(repo, commit, path):
@@ -87,12 +89,18 @@ def is_test_src(p):
     return is_c(p) and p.startswith("src/") and not p.startswith(NON_TEST_DIRS)
 
 
-GENERATED_FIXTURES = (".log", ".original")
+def is_build_file(p):
+    name = p.rsplit("/", 1)[-1]
+    return p.endswith(".sh") or name.startswith("Makefile") or name == "configure.ac"
 
 
 def is_textual(p):
-    # expected outputs and iasl fixtures mirror tool output, trailing blanks included
-    return not (p.startswith("fwts-test/") and p.endswith(GENERATED_FIXTURES))
+    # other fwts-test files (.log, .original, klog.txt, .dat) mirror tool output
+    return not p.startswith("fwts-test/") or is_build_file(p)
+
+
+def wants_ascii(p):
+    return p.endswith((".c", ".h")) or is_build_file(p)
 
 
 def rx(s):
@@ -104,11 +112,11 @@ TEXT_RULES = [
     ("cr", rx(r"\r"), "CR character; use LF line endings"),
     ("ws-after-backslash", rx(r"\\[ \t]+\r?$"),
      "whitespace after line-continuation backslash"),
-    ("non-ascii", rx(r"[^\x00-\x7f]"),
-     "non-ASCII character (smart quote or symbol pasted from a spec?)"),
     ("control-char", rx(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]"),
      "control character"),
 ]
+NON_ASCII = ("non-ascii", rx(r"[^\x00-\x7f]"),
+             "non-ASCII character (smart quote or symbol pasted from a spec?)")
 
 RAW_C_RULES = [
     ("indented-preproc",
@@ -166,7 +174,10 @@ TEST_ONLY_RULES = [
 
 STR_RE = rx(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
 PCT_L = rx(r"%[-+ #0]*\d*(?:\.\d+)?l{1,2}[diouxX]")
-LABEL_RE = rx(r'\bfwts_failed\s*\(\s*\w+\s*,\s*\w+\s*,\s*"([^"]*)"')
+LABEL_CALL = r"\bfwts_failed\s*\(\s*\w+\s*,\s*\w+(?:\s*\(\s*\w+\s*\))?\s*,\s*"
+LABEL_RE = rx(LABEL_CALL + r'"([^"]*)"')
+LABEL_OPEN_RE = rx(LABEL_CALL + r"$")
+LABEL_CONT_RE = rx(r'^\s*"([^"]*)"')
 CAMEL_RE = rx(r"^[A-Z][A-Za-z0-9]*$")
 GUARD_RE = rx(r"^#\s*define\s+(\w*_H_*)\s*$")
 FWTS_GUARD_RE = rx(r"^__FWTS_[A-Z0-9_]+_H__$")
@@ -188,6 +199,30 @@ DECL_RE = rx(
     r"[A-Za-z_]\w*(?:\s+|\s*\*+\s*)\**[A-Za-z_]\w*\s*(?:\[[^\]]*\]\s*)*(?:[=;,]|$)")
 
 
+def find_labels(lines):
+    """[(lineno, label)] of fwts_failed string labels in lines = [(lineno, text)],
+    including calls wrapped after the level argument onto the next added line."""
+    out, pending, prev = [], False, None
+    for ln, line in lines:
+        line = line.rstrip("\r")
+        if pending and ln == prev + 1:
+            m = LABEL_CONT_RE.match(line)
+            if m:
+                out.append((ln, m.group(1)))
+        m = LABEL_RE.search(line)
+        if m:
+            out.append((ln, m.group(1)))
+        pending, prev = bool(LABEL_OPEN_RE.search(line)), ln
+    return out
+
+
+def by_path(added):
+    out = {}
+    for path, ln, line in added:
+        out.setdefault(path, []).append((ln, line))
+    return out
+
+
 def strip_strings(s):
     return STR_RE.sub(lambda m: m.group(0)[0] * 2, s)
 
@@ -200,6 +235,9 @@ def check_c(path, lines):
         out.append((path, ln, rule, msg))
 
     header = path.endswith(".h")
+    labels = {}
+    for ln, label in find_labels(lines):
+        labels.setdefault(ln, []).append(label)
     in_comment = False
     prev_ln = prev_code = decl_state = None
     saw_decl = in_cont = False
@@ -214,9 +252,9 @@ def check_c(path, lines):
                 add(ln, rule, msg)
         if any(PCT_L.search(lit) for lit in STR_RE.findall(line)):
             add(ln, "pct-l", "use PRI* macros (or %zu for size_t) instead of %l")
-        m = LABEL_RE.search(line)
-        if m and not CAMEL_RE.match(m.group(1)):
-            add(ln, "label-camel", f'fwts_failed label "{m.group(1)}" must be CamelCase')
+        for label in labels.get(ln, []):
+            if not CAMEL_RE.match(label):
+                add(ln, "label-camel", f'fwts_failed label "{label}" must be CamelCase')
         if header:
             m = GUARD_RE.match(line)
             if m and not FWTS_GUARD_RE.match(m.group(1)):
@@ -279,17 +317,15 @@ def check_c(path, lines):
 
 
 def check_added(added):
-    out, by_path = [], {}
-    for path, ln, line in added:
-        by_path.setdefault(path, []).append((ln, line))
-    for path, lines in by_path.items():
+    out = []
+    for path, lines in by_path(added).items():
         if is_acpica(path):
             out.append((path, lines[0][0], "acpica-modified",
                         "src/acpica is upstream ACPICA; changes must come from ACPICA"))
             continue
         if is_textual(path):
             for ln, line in lines:
-                for rule, r, msg in TEXT_RULES:
+                for rule, r, msg in TEXT_RULES + ([NON_ASCII] if wants_ascii(path) else []):
                     if r.search(line):
                         out.append((path, ln, rule, msg))
         if is_c(path):
@@ -350,8 +386,12 @@ def check_commit_msg(msg, author_email):
 
 def run(repo, base, head):
     findings, labels = [], {}
-    commits = git(repo, "rev-list", "--reverse", "--no-merges",
-                  f"{base}..{head}").split()
+    revs = [l.split() for l in
+            git(repo, "rev-list", "--reverse", "--parents", f"{base}..{head}").split("\n")
+            if l]
+    if not revs:
+        raise RuntimeError(f"no commits in {base}..{head}")
+    commits = [r[0] for r in revs if len(r) == 2]
     for c in commits:
         diff = git(repo, "diff", "-M", "-U0", "--no-color", "--no-ext-diff",
                    f"{c}^", c)
@@ -361,13 +401,14 @@ def run(repo, base, head):
         fs += check_commit_msg(git(repo, "log", "-1", "--format=%B", c),
                                git(repo, "log", "-1", "--format=%ae", c).strip())
         findings += [Finding(c, *f) for f in fs]
-        for path, ln, line in added:
-            m = LABEL_RE.search(line) if is_c(path) else None
-            if m:
-                labels.setdefault(m.group(1), (c, path, ln))
+        for path, lines in by_path(added).items():
+            if is_c(path):
+                for ln, label in find_labels(lines):
+                    labels.setdefault(label, (c, path, ln))
     for label, (c, path, ln) in labels.items():
-        hits = git(repo, "grep", "-F", "-n", f'"{label}"', head, "--", "src",
-                   check=False).splitlines()
+        # counts lines holding the literal, so wrapped calls count too
+        hits = [l for l in git(repo, "grep", "-F", "-n", f'"{label}"', head,
+                               "--", "src", check=False).split("\n") if l]
         if len(hits) > 1:
             findings.append(Finding(c, path, ln, "label-dup",
                                     f'fwts_failed label "{label}" appears {len(hits)} times in the tree'))

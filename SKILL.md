@@ -27,7 +27,7 @@ S=~/.copilot/skills/fwts-review/scripts
 $S/fetch.sh '<PR number | PR URL | PR commit URL | fwts-devel URL | A..B>'
 ```
 
-It prints `ID= KIND= BASE= HEAD= WORK= WT=` (also saved to `$WORK/fetch.env`). IDs: `pr54`, `pr54-<sha8>` (PR commit URL: reviews only that commit, `BASE=HEAD^`), `ml-<hash>`, `local-<base8>-<head8>`. KIND is `pr`, `ml` or `local`. The default base is upstream master, fetched into `refs/fwts-review/origin-master`.
+It prints `ID= KIND= BASE= HEAD= WORK= WT=` (also saved to `$WORK/fetch.env`). IDs: `pr54`, `pr54-<sha8>` (PR commit URL `…/pull/N/changes/<sha>` or `…/pull/N/commits/<sha>`: reviews only that commit, `BASE=HEAD^`), `ml-<hash>`, `local-<base8>-<head8>`. KIND is `pr`, `ml` or `local`. The default base is upstream master, fetched into `refs/fwts-review/origin-master`.
 
 Exit codes: 0 ok, 2 usage (bad input; tell the user the accepted forms), 3 fetch/apply failure. On 3:
 - ml patch didn't apply (`git am failed`): retry on the tree as of the patch date:

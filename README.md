@@ -19,7 +19,16 @@ It runs four phases and writes `~/work/fwts-reviews/<ID>/report.md` and `reply.m
 git clone https://github.com/Ivanhu5866/fwts-review ~/.copilot/skills/fwts-review
 ```
 
-Then ask Copilot CLI something like `review https://github.com/fwts/fwts/pull/52`.
+## Usage
+
+Ask Copilot CLI, for example:
+
+| Request | Reviews |
+|---|---|
+| `review PR 52` or `review https://github.com/fwts/fwts/pull/52` | the whole PR |
+| `review https://github.com/fwts/fwts/pull/48/changes/8b93f97bf0cb53ae0ba2e97acb481f2bdd3ce70c` | one commit of a PR, against its parent (`/commits/<sha>` and short SHAs also work) |
+| `review https://lists.ubuntu.com/archives/fwts-devel/2025-August/014058.html` | a mailing-list patch |
+| `review HEAD~3..HEAD` | a local commit range in `~/work/fwts` |
 
 ## Requirements
 

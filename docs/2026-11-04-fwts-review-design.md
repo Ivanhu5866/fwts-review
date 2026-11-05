@@ -68,7 +68,7 @@ Trigger: "review" combined with a fwts PR or patch link, a github.com/fwts/fwts 
   - **Logging**: `printf(` or `exit(` in `src/` test code; `"\n"` at the end of an `fwts_log_*`/`fwts_failed`/`fwts_passed`/etc. string; `"PRIx`/`PRIx"` without spaces; `%l[dux]`; a `fwts_failed` label that isn't CamelCase; a new label already used elsewhere in the tree; `sprintf`/`strcpy`/`strcat`.
   - **Missing blank line** between declarations and the first statement in a new function.
 - **Commit metadata**:
-  - subject matches `^[a-z0-9_/ -]+: .+` (`component: [sub: ]summary`) and is 75 characters or fewer
+  - subject matches `^[a-z0-9_/ -]+: .+` (`component: [sub: ]summary`) and is 80 characters or fewer (fwts since 2023: ~1% exceed 80, ~6% exceed 75)
   - non-empty body
   - `Signed-off-by:` present and matching the author
   - no trailing whitespace

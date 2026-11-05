@@ -369,8 +369,8 @@ def check_commit_msg(msg, author_email):
     subj = lines[0]
     if not subj.startswith('Revert "') and not SUBJECT_RE.match(subj):
         add(1, "subject-format", "subject should be 'component: [sub: ]summary'")
-    if len(subj) > 75:
-        add(1, "subject-length", f"subject is {len(subj)} chars (max 75)")
+    if len(subj) > 80:
+        add(1, "subject-length", f"subject is {len(subj)} chars (max 80)")
     if not [l for l in lines[1:] if l.strip() and not TRAILER_RE.match(l)]:
         add(1, "empty-body", "commit message has no body")
     sobs = [l for l in lines if l.startswith("Signed-off-by:")]

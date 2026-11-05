@@ -1,7 +1,7 @@
 ## fwts patch / PR review checklist
 
 **Commit**
-- [ ] Subject line: `component: subcomponent: summary`
+- [ ] Subject line: `component: subcomponent: summary`, at most 80 characters
 - [ ] `Signed-off-by:` on every commit
 - [ ] Commit body explains why; the reasoning isn't only in the PR description
 - [ ] `BugLink:` line for related issues

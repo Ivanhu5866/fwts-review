@@ -245,6 +245,12 @@ def test_commit_msg_long_no_signoff():
         "subject-length", "no-signoff"}
 
 
+def test_subject_length_limit_is_80():
+    ok = "Signed-off-by: A <a@b.c>\n"
+    assert "subject-length" not in msg_rules("acpi: " + "x" * 74 + "\n\nBody.\n\n" + ok)
+    assert "subject-length" in msg_rules("acpi: " + "x" * 75 + "\n\nBody.\n\n" + ok)
+
+
 def test_commit_msg_revert_exempt():
     assert msg_rules('Revert "acpi: foo"\n\nThis reverts commit abc.\n\n'
                      "Signed-off-by: A <a@b.c>\n") == set()

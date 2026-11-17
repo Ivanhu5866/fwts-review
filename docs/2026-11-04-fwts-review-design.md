@@ -1,5 +1,7 @@
 # fwts-review skill: design
 
+> Historical document: the current SKILL.md and scripts/build_test.sh supersede per-commit build instructions below. Review every patch; build and test only the final tree after all patches are applied.
+
 Date: 2026-11-04
 Owner: Ivan Hu (@Ivanhu5866)
 Status: design approved; implementation not started

@@ -1,5 +1,7 @@
 # fwts-review skill: implementation plan
 
+> Historical document: the current SKILL.md and scripts/build_test.sh supersede per-commit build instructions below. Review every patch; build and test only the final tree after all patches are applied.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to carry out this plan task by task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the `fwts-review` Copilot CLI skill. It reviews fwts GitHub PRs, fwts-devel mailing-list patches and local commit ranges, covering coding style, spec content, build and test. Its output is a report and a draft reply. It never posts anything.

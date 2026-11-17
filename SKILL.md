@@ -1,6 +1,6 @@
 ---
 name: fwts-review
-description: Review fwts (Firmware Test Suite) changes: GitHub PRs on github.com/fwts/fwts, fwts-devel mailing-list patches on lists.ubuntu.com/archives/fwts-devel, or a local fwts commit range. Checks coding style, verifies the content against the ACPI/UEFI/SMBIOS/Arm/TCG specs, builds every commit, runs make check and fixture tests, then writes a review report and a draft reply. Activate whenever the user asks to review, check or ack an fwts PR, patch or commit, or pastes a github.com/fwts/fwts/pull URL or an fwts-devel archive URL, even without the word "skill".
+description: "Review fwts (Firmware Test Suite) changes: GitHub PRs on github.com/fwts/fwts, fwts-devel mailing-list patches on lists.ubuntu.com/archives/fwts-devel, or a local fwts commit range. Checks coding style, verifies the content against the ACPI/UEFI/SMBIOS/Arm/TCG specs, reviews every patch, builds the final tree with all patches applied, runs make check and fixture tests, then writes a review report and a draft reply. Activate whenever the user asks to review, check or ack an fwts PR, patch or commit, or pastes a github.com/fwts/fwts/pull URL or an fwts-devel archive URL, even without the word \"skill\"."
 ---
 
 # fwts-review
@@ -41,9 +41,13 @@ Exit codes: 0 ok, 2 usage (bad input; tell the user the accepted forms), 3 fetch
 
 For KIND=pr, read `$WORK/pr.json` (number, title, body, author, baseRefName, headRefName, commits, files, url). Note issues referenced in the body (`#N`, `Fixes #N`).
 
-## Start build/test in the background
+## Review scope and final-tree build/test
 
-It takes ~2–3 minutes, so start it now and do phases 1–2 while it runs. Use bash `mode: "async"`:
+For a PR, review every patch in `BASE..HEAD`, including each commit message, style, correctness, and specification claims. Read the patches in order and inspect the combined diff at HEAD for interactions between them. Do not build or run tests for individual intermediate commits. An explicitly requested single-commit review remains limited to that commit.
+
+Fetch/apply the complete selected series before starting builds or tests. Build and test only the final HEAD with all selected patches applied; do not require each intermediate patch to build independently. The optional base build is only a fixture-comparison baseline, not a per-patch build.
+
+The final-tree build/test takes ~2–3 minutes, so start it in the background after fetch/apply completes and do phases 1–2 while it runs. Use bash `mode: "async"`:
 
 ```bash
 S=~/.copilot/skills/fwts-review/scripts; . /tmp/fwts-review-<ID>/fetch.env
@@ -118,12 +122,12 @@ Every claim gets a row in the report: `claim | source (file + heading/line, or p
 
 `build_test.out` lines:
 - `MERGE_BASE=<sha>`: BASE isn't an ancestor of HEAD; diffs, cppcheck and fixtures used the merge base.
-- `gcc <sha8>: PASS | FAIL: <first error>`: one per commit (bisectability); log `logs/build-<sha8>.log`.
+- `gcc <sha8>: PASS | FAIL: <first error>`: one result for the final HEAD with all patches applied; log `logs/build-<head8>.log`. Intermediate commits are reviewed but not built.
 - `make check: PASS (TOTAL: …) | FAIL (…) <failing tests> | SKIP (head build failed)`: at HEAD; `logs/make-check.log`.
 - `clang: …` and `cppcheck: N new | N/A (no .c changes)`: `SKIP (… not installed)` is **not** a failure; list the SKIPs in the report. New cppcheck warnings (changed non-ACPICA `.c` files, base vs head) are in `logs/cppcheck-new.txt`.
 - `fixtures: N run, N changed vs base, N differ from expected`, then only the rows worth reading: `fwts-test/<t>/test-N.sh [not in TESTS] (<dump>): base[<summary>] head[<summary>] diff=<base-vs-head lines> exp=<head-vs-expected-.log lines | n/a>`, `no-summary`, or `dump file missing`; then a count line (tests without fixture coverage, klog-style ones covered by make check, unchanged). All rows: `logs/fixtures.txt`; outputs: `logs/fx-{base,head}-<tag>.log`.
 - `regression checks:` then `none` or lines from `logs/regression.txt`: `NOT-IN-TESTS`, `OPTION-NO-MANPAGE`, `OPTION-NO-ARG-HELP`, `NO-FWTS-TEST-CHANGE (advisory)`.
-- `matrix: …/logs/matrix.tsv` (commit, subject, gcc, clang, make_check, cppcheck_new, fixtures; a merge HEAD gets a `merge-head:` row).
+- `matrix: …/logs/matrix.tsv` (commit, subject, gcc, clang, make_check, cppcheck_new, fixtures; exactly one row for the final HEAD, including when HEAD is a merge commit).
 
 Interpret:
 - any gcc FAIL or `make check` FAIL → **Blocking**

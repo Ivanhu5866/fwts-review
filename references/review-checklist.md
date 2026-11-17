@@ -6,7 +6,7 @@
 - [ ] Commit body explains why; the reasoning isn't only in the PR description
 - [ ] `BugLink:` line for related issues
 - [ ] One logical change per commit; fix-ups squashed; unrelated changes split out
-- [ ] Every commit builds on its own
+- [ ] Every patch reviewed; the final tree builds with all patches applied (no intermediate-commit builds)
 - [ ] Correct copyright and GPL header on new or changed files
 
 **Build**

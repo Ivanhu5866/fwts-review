@@ -1,5 +1,5 @@
 #!/bin/bash
-# fwts-review: build every commit, make check, clang, cppcheck, fixture runs.
+# fwts-review: build final HEAD after all patches, make check, clang, cppcheck, fixtures.
 #   build_test.sh WORK BASE HEAD
 # WORK is /tmp/fwts-review-<ID> from fetch.sh (WORK/wt must exist).
 # Writes WORK/logs/*; prints a summary. Exit 0; 2 usage/empty range; 3 no merge base.
@@ -28,40 +28,25 @@ full_build() {	# DIR LOG [CC]
 	( cd "$1" && git clean -qfdx && autoreconf -ivf && CC=${3:-gcc} ./configure &&
 	  make -j"$J" ) > "$2" 2>&1
 }
-incr_build() { ( cd "$1" && make -j"$J" ) > "$2" 2>&1; }
 first_err() { grep -m1 -E 'error:|Error [0-9]+|configure: error' "$1" | cut -c1-160; }
 add_wt() {	# NAME REV
 	if [ -d "$WORK/$1" ]; then git -C "$WT" worktree remove --force "$WORK/$1"; fi
 	git -C "$WT" worktree add -q --detach "$WORK/$1" "$2"
 }
 
-# 1. per-commit gcc build (bisectability); a merge HEAD is built after the loop
-declare -A GCC
-first=1
-build_at() {	# COMMIT: checkout and build in WT, set GCC[COMMIT], print it
-	local c=$1 log=$LOGS/build-${1:0:8}.log rc
-	if ! git -C "$WT" checkout -q --detach "$c"; then
-		GCC[$c]="FAIL: checkout"; echo "gcc ${c:0:8}: ${GCC[$c]}"; return
-	fi
-	if [ $first = 1 ]; then
-		full_build "$WT" "$log"; rc=$?; first=0
-	else
-		incr_build "$WT" "$log"; rc=$?
-		if [ $rc -ne 0 ]; then full_build "$WT" "$log"; rc=$?; fi
-	fi
-	if [ $rc -eq 0 ]; then GCC[$c]=PASS; else GCC[$c]="FAIL: $(first_err "$log")"; fi
-	echo "gcc ${c:0:8}: ${GCC[$c]}"
-}
-COMMITS=$(git -C "$WT" rev-list --reverse --no-merges "$BASE..$HEAD")
-for c in $COMMITS; do build_at "$c"; done
-MERGE_HEAD=0
-if [ -z "${GCC[$HEAD]:-}" ]; then
-	MERGE_HEAD=1
-	build_at "$HEAD"
-fi
-git -C "$WT" checkout -q --detach "$HEAD"
+# 1. gcc build of final HEAD with the complete series applied.
+# Intermediate commits are reviewed separately, never built here.
 HEAD_OK=0
-[ "${GCC[$HEAD]}" = PASS ] && HEAD_OK=1
+log=$LOGS/build-${HEAD:0:8}.log
+if ! git -C "$WT" checkout -q --detach "$HEAD"; then
+	GCC="FAIL: checkout"
+elif full_build "$WT" "$log"; then
+	GCC=PASS
+	HEAD_OK=1
+else
+	GCC="FAIL: $(first_err "$log")"
+fi
+echo "gcc ${HEAD:0:8}: $GCC"
 
 # 2. make check at HEAD
 if [ $HEAD_OK = 1 ]; then
@@ -257,19 +242,10 @@ fi
 echo "regression checks:"
 if [ -s "$REG" ]; then sed 's/^/  /' "$REG"; else echo "  none"; fi
 
-# 7. matrix
-row() {	# COMMIT SUBJECT-PREFIX
-	local subj
-	subj=$2$(git -C "$WT" log -1 --format=%s "$1" | cut -c1-60)
-	if [ "$1" = "$HEAD" ]; then
-		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${1:0:8}" "$subj" "${GCC[$1]}" "$CL" "$MC" "$CP" "$FX"
-	else
-		printf '%s\t%s\t%s\t-\t-\t-\t-\n' "${1:0:8}" "$subj" "${GCC[$1]}"
-	fi
-}
+# 7. one matrix row for the final HEAD, including merge commits.
+subj=$(git -C "$WT" log -1 --format=%s "$HEAD" | cut -c1-60)
 {
 	printf 'commit\tsubject\tgcc\tclang\tmake_check\tcppcheck_new\tfixtures\n'
-	for c in $COMMITS; do row "$c" ""; done
-	[ $MERGE_HEAD = 1 ] && row "$HEAD" "merge-head: "
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${HEAD:0:8}" "$subj" "$GCC" "$CL" "$MC" "$CP" "$FX"
 } > "$LOGS/matrix.tsv"
 echo "matrix: $LOGS/matrix.tsv"

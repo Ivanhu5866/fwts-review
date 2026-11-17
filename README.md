@@ -10,7 +10,7 @@ It runs four phases and writes `~/work/fwts-reviews/<ID>/report.md` and `reply.m
 
 1. **Style**: `scripts/style_check.py` checks fwts coding-style rules on the added lines and on the commit message.
 2. **Spec content**: `scripts/spec_lookup.sh` looks up the ACPI, UEFI, SMBIOS, TCG and Arm specs. It reads only a local document library and never goes online. If a spec is missing or outdated, it prints `UPDATE-SPEC:` and the review asks you to add the document.
-3. **Build**: gcc on every commit, plus clang and cppcheck when they are installed.
+3. **Build**: review every patch, then build only the final tree with all patches applied, using gcc plus clang and cppcheck when installed. Intermediate commits are not built.
 4. **Test**: `make check`, the fixtures under `fwts-test/`, and regression checks.
 
 ## Install

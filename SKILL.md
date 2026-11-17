@@ -75,7 +75,7 @@ Triage every finding against the code. Drop false positives, for example:
 - `decl-blank` on a misread declaration
 
 Group the rest (real rule IDs only):
-- **Should fix**: `acpica-modified` (non-import), `no-signoff`, `signoff-author`, `label-dup`, `printf-in-test`, `exit-in-test`, `unsafe-string`, `c99-for-decl`
+- **Should fix**: `acpica-modified` (non-import), `no-signoff`, `signoff-author`, `label-dup`, `printf-in-test`, `exit-in-test`, `unsafe-string`
 - **Nit**: everything else (`trailing-ws`, `cr`, `ws-after-backslash`, `control-char`, `non-ascii`, `bom`, `no-final-newline`, `blank-line-eof`, `indented-preproc`, `space-indent`, `space-before-tab`, `pri-space`, `space-before-nl`, `log-newline`, `pct-l`, `label-camel`, `header-guard`, `comment-space`, `comment-open-text`, `cpp-comment`, `kw-space`, `brace-space`, `sizeof-space`, `paren-space`, `comma-space`, `incdec-space`, `return-paren`, `star-with-type`, `bare-unsigned`, `unused-attr`, `void-cast-unused`, `empty-params`, `func-brace-same-line`, `nonstd-int`, `call-space`, `else-newline`, `decl-blank`, `subject-format`, `subject-length`, `empty-body`, `msg-trailing-ws`)
 
 Also read the diff (`git -C "$WT" log -p --reverse "$BASE..$HEAD"`) for style the script can't see:

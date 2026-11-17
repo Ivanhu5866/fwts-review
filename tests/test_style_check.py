@@ -39,7 +39,6 @@ CASES = [
     (C, "\tfoo(a,b);", "comma-space"),
     (C, "\tx ++;", "incdec-space"),
     (C, "\treturn (x);", "return-paren"),
-    (C, "\tfor (int i = 0; i < n; i++)", "c99-for-decl"),
     (C, "\tchar* p;", "star-with-type"),
     (C, "\tu32 x;", "nonstd-int"),
     (C, "\tunsigned x;", "bare-unsigned"),
@@ -107,6 +106,10 @@ FWTS_REGISTER("foo", &foo_ops, FWTS_TEST_ANYTIME, FWTS_FLAG_BATCH)
 def test_clean_code_has_no_findings():
     added = [(C, i + 1, l) for i, l in enumerate(CLEAN.split("\n")[:-1])]
     assert sc.check_added(added) == []
+
+
+def test_c99_loop_declaration_accepted():
+    assert rules([(C, 1, "\tfor (uint32_t i = 0; i < n; i++)")]) == []
 
 
 def test_else_newline():

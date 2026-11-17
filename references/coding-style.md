@@ -66,7 +66,7 @@ Quick check: `git diff --check <base>..HEAD` (or `git show --check`) flags trail
 - [ ] `size_t` for lengths (29279c70)
 - [ ] `const` on read-only pointer arguments and read-only scalar arguments (the 2021 constify series)
 - [ ] `static const` for lookup tables that are never modified
-- [ ] Declare variables at the top of a block; avoid C99 `for (int i = 0; ...)` (10 instances)
+- [ ] Declare variables at the top of a block. Exception: a C99 loop declaration such as `for (uint32_t i = 0; ...)` is accepted (used in aspt, mpam, ras2, skvl, uniqueid, viot and tpmevlog); don't flag it
 - [ ] Give variables the smallest scope (3bf81fd1, 6bcbca54, bf8602dc)
 - [ ] No unused variables, redundant initialisation or redundant null checks (ae2f7e3a, 71f5091f, dc77b438)
 

@@ -1,14 +1,14 @@
 ---
 name: fwts-review
-description: "Review fwts (Firmware Test Suite) changes: GitHub PRs on github.com/fwts/fwts, fwts-devel mailing-list patches on lists.ubuntu.com/archives/fwts-devel, or a local fwts commit range. Checks coding style, verifies the content against the ACPI/UEFI/SMBIOS/Arm/TCG specs, reviews every patch, builds the final tree with all patches applied, runs make check and fixture tests, then writes a review report and a draft reply. Activate whenever the user asks to review, check or ack an fwts PR, patch or commit, or pastes a github.com/fwts/fwts/pull URL or an fwts-devel archive URL, even without the word \"skill\"."
+description: "Review fwts (Firmware Test Suite) changes: GitHub PRs on github.com/fwts/fwts, fwts-devel mailing-list patches on lists.ubuntu.com/archives/fwts-devel, or a local fwts commit range. Checks coding style, verifies the content against the ACPI/UEFI/SMBIOS/Arm/TCG specs, reviews every patch, builds the final tree with all patches applied, runs make check and fixture tests, then shows a review report and a draft reply on screen, then asks whether to save them to .md files and/or post the reply. Activate whenever the user asks to review, check or ack an fwts PR, patch or commit, or pastes a github.com/fwts/fwts/pull URL or an fwts-devel archive URL, even without the word \"skill\"."
 ---
 
 # fwts-review
 
-Review an fwts change in four phases (style → spec → build → test). The output is `~/work/fwts-reviews/<ID>/report.md` plus `reply.md`.
+Review an fwts change in four phases (style → spec → build → test). The report and the draft reply are shown on screen; the user then chooses to save them to `~/work/fwts-reviews/<ID>/`, post the reply, both, or neither.
 
 Rules:
-- **Never** post to GitHub or send mail.
+- **Never** post to GitHub or send mail unless the user picks "Reply" or "Both" in the final prompt, and only via `post_review.py` for GitHub PRs. Mailing-list replies are never sent; they are only shown.
 - **Never** touch the `~/work/fwts` working tree (no checkout, reset, am, commit there). The scripts only add worktrees and `refs/fwts-review/*` refs; all work happens in `/tmp/fwts-review-<ID>/` (`$WORK`; root overridable with `FWTS_REVIEW_ROOT`). Read-only `git -C ~/work/fwts grep/show/log` is fine.
 - **Always** run the cleanup step, even after an error, but only after `build_test.sh` has finished.
 - Shell state doesn't persist between bash calls: start each command with `S=~/.copilot/skills/fwts-review/scripts; . /tmp/fwts-review-<ID>/fetch.env` (sets `ID KIND BASE HEAD WORK WT`).
@@ -158,10 +158,12 @@ Verdict:
 - **Approve with nits**: only nits
 - **Approve**: clean
 
-## Outputs: `~/work/fwts-reviews/<ID>/`
+## Outputs: draft, show, then ask
+
+Draft both files in `$WORK/out/` (not in `~/work/fwts-reviews/`):
 
 ```bash
-mkdir -p ~/work/fwts-reviews/$ID && cp -r "$WORK/logs" ~/work/fwts-reviews/$ID/
+mkdir -p "$WORK/out"
 ```
 
 `report.md`:
@@ -186,10 +188,36 @@ Input: <url or range> | Base: <sha8> | Head: <sha8> | Author: <name> | Date: <to
 
 Tone: concise, specific, cite `file:line` and the spec section, and suggest the fix.
 
+**Show** both files on screen: print `$WORK/out/report.md` and then `$WORK/out/reply.md` in full in your response (not only in tool output). Don't write anything to `~/work/fwts-reviews/` yet.
+
+**Ask** with `ask_user`: one single-choice field, "What should I do with this review?", with these options (default "Save to md"):
+- `Save to md`
+- `Reply`: for KIND=pr, post the review on GitHub; for KIND=ml or local, nothing is sent, and the plain-text reply shown above is the one to paste
+- `Both`
+- `Neither`
+
+The user may also ask for edits in free text: apply them to the drafts, show the changed parts, and ask again.
+
+**Save** (Save to md or Both):
+
+```bash
+mkdir -p ~/work/fwts-reviews/$ID && cp "$WORK/out/report.md" "$WORK/out/reply.md" ~/work/fwts-reviews/$ID/ && cp -r "$WORK/logs" ~/work/fwts-reviews/$ID/
+```
+
+**Reply** (Reply or Both, KIND=pr only). First check the payload, then post:
+
+```bash
+PR=${ID%%-*}; PR=${PR#pr}
+python3 $S/post_review.py --pr $PR --commit $HEAD --verdict "<verdict>" --dry-run "$WORK/out/reply.md"
+python3 $S/post_review.py --pr $PR --commit $HEAD --verdict "<verdict>" "$WORK/out/reply.md"
+```
+
+The review event follows the verdict: Request changes → REQUEST_CHANGES, Approve or Approve with nits → APPROVE. Inline comments become line comments on the PR. If GitHub rejects them (the line is not in the diff), the script re-posts with them folded into the body; if it rejects APPROVE or REQUEST_CHANGES (for example on your own PR), it re-posts as COMMENT. Expect `POSTED=<url>`, and report any `NOTE:` line. Inline `path:line` must be the line number in the file at `$HEAD`.
+
 ## Cleanup (always, after build_test.sh has finished)
 
 ```bash
 ~/.copilot/skills/fwts-review/scripts/fetch.sh --cleanup <ID>
 ```
 
-Expect `CLEANED=<ID>`. Tell the user the verdict, the counts (blocking, should-fix, nits) and the paths to `report.md` and `reply.md`. If "Specs to update" is not empty, end with: `Please update these specs in ~/CloudStation/Document/: …`.
+Run cleanup only after the save/reply step (it deletes `$WORK/out`). Expect `CLEANED=<ID>`. Tell the user the verdict, the counts (blocking, should-fix, nits) and what was done: the saved paths and/or the posted review URL. If "Specs to update" is not empty, end with: `Please update these specs in ~/CloudStation/Document/: …`.

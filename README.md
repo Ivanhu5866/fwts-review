@@ -6,7 +6,11 @@ A GitHub Copilot CLI skill that reviews [fwts](https://github.com/fwts/fwts) (Fi
 - fwts-devel mailing-list patches (lists.ubuntu.com archive URL)
 - local commit ranges (`A..B`)
 
-It runs four phases and writes `~/work/fwts-reviews/<ID>/report.md` and `reply.md`. It never posts to GitHub and never sends mail.
+It runs four phases, shows the report and a draft reply on screen, then asks what to do:
+
+- **Save to md**: write `~/work/fwts-reviews/<ID>/report.md`, `reply.md` and the logs
+- **Reply**: post the review on the GitHub PR (`scripts/post_review.py`; the event follows the verdict, with inline line comments). Mailing-list replies are never sent; they are only shown for you to paste.
+- **Both** or **Neither**
 
 1. **Style**: `scripts/style_check.py` checks fwts coding-style rules on the added lines and on the commit message.
 2. **Spec content**: `scripts/spec_lookup.sh` looks up the ACPI, UEFI, SMBIOS, TCG and Arm specs. It reads only a local document library and never goes online. If a spec is missing or outdated, it prints `UPDATE-SPEC:` and the review asks you to add the document.
@@ -49,6 +53,6 @@ Optional overrides:
 |---|---|
 | `SKILL.md` | Skill entry point and workflow |
 | `references/` | Review checklist, coding-style rules, spec map |
-| `scripts/` | `fetch.sh`, `build_test.sh`, `style_check.py`, `spec_lookup.sh`, `mbox_extract.py` |
+| `scripts/` | `fetch.sh`, `build_test.sh`, `style_check.py`, `spec_lookup.sh`, `mbox_extract.py`, `post_review.py` |
 | `tests/` | pytest suite (`python3 -m pytest -q tests`) |
 | `docs/` | Design and implementation plan |
